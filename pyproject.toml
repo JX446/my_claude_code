@@ -1,0 +1,11 @@
+[project]
+name = "my-claude-code"
+version = "0.1.0"
+description = "learn claude code"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.94.0",
+    "dotenv>=0.9.9",
+    "openai>=2.31.0",
+]
