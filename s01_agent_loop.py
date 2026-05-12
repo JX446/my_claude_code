@@ -88,7 +88,7 @@ def run_one_turn(state: LoopState) -> bool:
         model="MiniMax-M2.7",
         system=SYSTEM,
         messages=state.messages,
-        tools=TOOLS,
+        tools=TOOLS,  # type: ignore
         max_tokens=8000,
     )
     # 将最新回答的消息加入state
