@@ -26,11 +26,15 @@ def run_bash(command: str) -> str:
             capture_output=True,
             text=True,
             timeout=120,
+            encoding="gbk",
         )
     except subprocess.TimeoutExpired:
         return "Error: Timeout (120s)"
-    output = (result.stdout + result.stderr).strip()
-    return output[:50000] if output else "(no output)"
+    output = ((result.stdout or "") + (result.stderr or "")).strip()
+    if result.returncode != 0:
+        return f"Error: command failed with code {result.returncode}\n{output}"
+    else:
+        return output[:50000] if output else "(no output)"
 
 
 def run_read(path: str, limit: int | None = None) -> str:
@@ -73,7 +77,7 @@ TOOL_HANDLERS = {
     "todo": lambda **kw: TODO.update(kw["items"]),
 }
 
-TOOLS = [
+CHILD_TOOLS = [
     {
         "name": "bash",
         "description": "Run a shell command.",
@@ -146,6 +150,24 @@ TOOLS = [
                 },
             },
             "required": ["items"],
+        },
+    },
+]
+
+PARENT_TOOLS = CHILD_TOOLS + [
+    {
+        "name": "task",
+        "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "description": {
+                    "type": "string",
+                    "description": "Short description of the task",
+                },
+            },
+            "required": ["prompt"],
         },
     },
 ]
