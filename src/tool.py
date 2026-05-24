@@ -193,6 +193,15 @@ CHILD_TOOLS = [
             "required": ["name"],
         },
     },
+    {
+        "name": "compact",
+        "description": "Summarize earlier conversation so work can continue in a smaller context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"focus": {"type": "string"}},
+            "required": ["focus"],
+        },
+    },
 ]
 
 PARENT_TOOLS = CHILD_TOOLS + [

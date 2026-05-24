@@ -4,6 +4,13 @@ from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
+from compact import (
+    CONTEXT_LIMIT,
+    CompactState,
+    compact_history,
+    estimate_context_size,
+    micro_compact,
+)
 from my_logger import log_task_end, log_task_start, log_tool_call
 from skill import SKILL_REGISTRY
 from subagent import subagent_loop
@@ -41,8 +48,13 @@ def extract_text(content) -> str:
     return "\n".join(texts).strip()
 
 
-def agent_loop(messages: list) -> None:
+def agent_loop(messages: list, state: CompactState) -> None:
     while True:
+        messages = micro_compact(messages)
+        if estimate_context_size(messages) > CONTEXT_LIMIT:
+            log_tool_call("compact", "auto compact")
+            messages = compact_history(client, MODEL, messages, state)
+
         response = client.messages.create(
             model=MODEL,
             system=SYSTEM,
@@ -54,11 +66,17 @@ def agent_loop(messages: list) -> None:
         if response.stop_reason != "tool_use":
             return
         results = []
+        manual_compact = False
+        compact_focus = None
         used_todo = False
         for block in response.content:
             if block.type == "tool_use":
+                # 调用compact
+                if block.name == "compact":
+                    manual_compact = True
+                    compact_focus = str((block.input or {}).get("focus"))
                 # 调用subagent
-                if block.name == "task":
+                elif block.name == "task":
                     desc = block.input.get("description", "task")
                     prompt = str(block.input.get("prompt", ""))
                     log_task_start(desc)
@@ -94,6 +112,11 @@ def agent_loop(messages: list) -> None:
                     )
                     if block.name == "todo":
                         used_todo = True
+        if manual_compact:
+            log_tool_call("manual_compact", "compacting")
+            messages[:] = compact_history(
+                client, MODEL, messages, state, focus=compact_focus
+            )
         if used_todo:
             TODO.state.rounds_since_update = 0
         else:
