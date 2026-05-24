@@ -1,11 +1,16 @@
 import re
 from pathlib import Path
 
+from skill import SKILL_REGISTRY
 from tool import CHILD_TOOLS, TOOL_HANDLERS
 
 WORKDIR = Path.cwd()
 
-SUBAGENT_SYSTEM = f"You are a coding subagent at {WORKDIR}. Complete the given task, then summarize your findings."
+SUBAGENT_SYSTEM = f"""You are a coding subagent at {WORKDIR}.
+Complete the given task, then summarize your findings.
+Skills available:
+{SKILL_REGISTRY.describe_available()}
+"""
 
 
 class AgentTemplate:

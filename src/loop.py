@@ -5,6 +5,7 @@ from anthropic import Anthropic
 from dotenv import load_dotenv
 
 from my_logger import log_task_end, log_task_start, log_tool_call
+from skill import SKILL_REGISTRY
 from subagent import subagent_loop
 from tool import PARENT_TOOLS, TODO, TOOL_HANDLERS
 
@@ -14,6 +15,7 @@ if os.getenv("ANTHROPIC_BASE_URL"):
 WORKDIR = Path.cwd()
 client = Anthropic(base_url=os.getenv("ANTHROPIC_BASE_URL"))
 MODEL = os.environ["MODEL_ID"]
+
 SYSTEM = f"""You are a coding agent at {WORKDIR}.
 Use the todo tool for multi-step work.
 Keep exactly one step in_progress when a task has multiple steps.
@@ -22,7 +24,10 @@ Refresh the plan as work advances. Prefer tools over prose.
 不要使用 head、tail、ls、cat、grep、sed、awk 等 Linux 命令。
 如需查看文件，请调用 read_file 工具。
 如需列目录，请使用 Python 或 PowerShell 命令。
-部分文件可能是 GBK 编码，读取时如遇乱码请用 PowerShell 处理编码转换；写入文件统一使用 UTF-8。"""
+部分文件可能是 GBK 编码，读取时如遇乱码请用 PowerShell 处理编码转换；写入文件统一使用 UTF-8。
+Skills available:
+{SKILL_REGISTRY.describe_available()}
+"""
 
 
 def extract_text(content) -> str:

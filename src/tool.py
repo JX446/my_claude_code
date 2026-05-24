@@ -1,6 +1,8 @@
+import os
 import subprocess
 from pathlib import Path
 
+from skill import SKILL_REGISTRY
 from todo import TodoManager
 
 TODO = TodoManager()
@@ -18,28 +20,46 @@ def run_bash(command: str) -> str:
     dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"]
     if any(item in command for item in dangerous):
         return "Error: Dangerous command blocked"
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env["LC_ALL"] = "C.UTF-8"
+    env["LANG"] = "C.UTF-8"
+
     try:
         result = subprocess.run(
             command,
             shell=True,
             cwd=WORKDIR,
-            capture_output=True,
-            text=True,
+            env=env,
             timeout=120,
-            encoding="gbk",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
     except subprocess.TimeoutExpired:
         return "Error: Timeout (120s)"
-    output = ((result.stdout or "") + (result.stderr or "")).strip()
+
+    stdout = decode_output(result.stdout)
+    stderr = decode_output(result.stderr)
+
+    parts = []
+    if stdout.strip():
+        parts.append(stdout)
+    if stderr.strip():
+        parts.append(stderr)
+
+    output = "\n".join(parts).strip()
+
     if result.returncode != 0:
         return f"Error: command failed with code {result.returncode}\n{output}"
-    else:
-        return output[:50000] if output else "(no output)"
+
+    return output[:50000] if output else "(no output)"
 
 
 def run_read(path: str, limit: int | None = None) -> str:
     try:
-        lines = safe_path(path).read_text().splitlines()
+        lines = safe_path(path).read_text(encoding="utf-8").splitlines()
         if limit and limit < len(lines):
             lines = lines[:limit] + [f"... ({len(lines) - limit} more lines)"]
         return "\n".join(lines)[:50000]
@@ -51,7 +71,7 @@ def run_write(path: str, content: str) -> str:
     try:
         file_path = safe_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content)
+        file_path.write_text(content, encoding="utf-8")
         return f"Wrote {len(content)} bytes to {path}"
     except Exception as exc:
         return f"Error: {exc}"
@@ -63,10 +83,21 @@ def run_edit(path: str, old_text: str, new_text: str) -> str:
         content = file_path.read_text()
         if old_text not in content:
             return f"Error: Text not found in {path}"
-        file_path.write_text(content.replace(old_text, new_text, 1))
+        file_path.write_text(content.replace(old_text, new_text, 1), encoding="utf-8")
         return f"Edited {path}"
     except Exception as exc:
         return f"Error: {exc}"
+
+
+def decode_output(data: bytes) -> str:
+    if not data:
+        return ""
+    for enc in ("utf-8", "gbk", "cp936"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", "replace")
 
 
 TOOL_HANDLERS = {
@@ -75,6 +106,7 @@ TOOL_HANDLERS = {
     "write_file": lambda **kw: run_write(kw["path"], kw["content"]),
     "edit_file": lambda **kw: run_edit(kw["path"], kw["old_text"], kw["new_text"]),
     "todo": lambda **kw: TODO.update(kw["items"]),
+    "load_skill": lambda **kw: SKILL_REGISTRY.load_full_text(kw["name"]),
 }
 
 CHILD_TOOLS = [
@@ -150,6 +182,15 @@ CHILD_TOOLS = [
                 },
             },
             "required": ["items"],
+        },
+    },
+    {
+        "name": "load_skill",
+        "description": "Load the full body of a named skill into the current context.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
         },
     },
 ]
