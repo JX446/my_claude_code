@@ -3,7 +3,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from my_logger import log_tool_call
+from logger import log_tool_call
 
 WORKDIR = Path.cwd()
 CONTEXT_LIMIT = 50000

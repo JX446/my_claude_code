@@ -1,8 +1,10 @@
 import re
 from pathlib import Path
 
+from logger import log_tool_call
+from permission import PermissionManager
 from skill import SKILL_REGISTRY
-from tool import CHILD_TOOLS, TOOL_HANDLERS
+from tools import CHILD_TOOLS, TOOL_HANDLERS
 
 WORKDIR = Path.cwd()
 
@@ -44,7 +46,7 @@ class AgentTemplate:
         self.name = self.config.get("name", self.name)
 
 
-def subagent_loop(client, model, prompt: str) -> str:
+def subagent_loop(client, model, prompt: str, perms: PermissionManager) -> str:
     """Run a subagent with fresh context. Returns the subagent's final text response."""
     sub_messages = [{"role": "user", "content": prompt}]
     response = None
@@ -62,6 +64,31 @@ def subagent_loop(client, model, prompt: str) -> str:
         results = []
         for block in response.content:
             if block.type == "tool_use":
+                # 权限检查：调用 PermissionManager.check() 的多层决策链
+                decision = perms.check(block.name, dict(block.input or {}))
+                if decision["behavior"] == "deny":
+                    output = f"⛔ [Denied] {decision.get('reason', '')}"
+                    log_tool_call(block.name, output[:100])
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": output,
+                        }
+                    )
+                    continue
+                elif decision["behavior"] == "ask":
+                    output = f"⏳ [Ask required] {decision.get('reason', '')}\n(Agent loop non-interactive. Add allow rule or switch mode.)"
+                    log_tool_call(block.name, output[:100])
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": output,
+                        }
+                    )
+                    continue
+                # behavior == "allow" → 继续执行
                 handler = TOOL_HANDLERS.get(block.name)
                 output = (
                     handler(**block.input) if handler else f"Unknown tool: {block.name}"

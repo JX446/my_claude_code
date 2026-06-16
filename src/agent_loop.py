@@ -11,10 +11,11 @@ from compact import (
     estimate_context_size,
     micro_compact,
 )
-from my_logger import log_task_end, log_task_start, log_tool_call
+from logger import log_task_end, log_task_start, log_tool_call
+from permission import PermissionManager
 from skill import SKILL_REGISTRY
 from subagent import subagent_loop
-from tool import PARENT_TOOLS, TODO, TOOL_HANDLERS
+from tools import PARENT_TOOLS, TODO, TOOL_HANDLERS
 
 load_dotenv(override=True)
 if os.getenv("ANTHROPIC_BASE_URL"):
@@ -48,7 +49,7 @@ def extract_text(content) -> str:
     return "\n".join(texts).strip()
 
 
-def agent_loop(messages: list, state: CompactState) -> None:
+def agent_loop(messages: list, state: CompactState, perms: PermissionManager) -> None:
     while True:
         messages = micro_compact(messages)
         if estimate_context_size(messages) > CONTEXT_LIMIT:
@@ -80,7 +81,7 @@ def agent_loop(messages: list, state: CompactState) -> None:
                     desc = block.input.get("description", "task")
                     prompt = str(block.input.get("prompt", ""))
                     log_task_start(desc)
-                    output = subagent_loop(client, MODEL, prompt)
+                    output = subagent_loop(client, MODEL, prompt, perms)
                     summary = output.split("\n")[0][:100]
                     log_task_end(summary)
                     results.append(
@@ -92,6 +93,31 @@ def agent_loop(messages: list, state: CompactState) -> None:
                     )
                 # 调用其他工具
                 else:
+                    # 权限检查：调用 PermissionManager.check() 的多层决策链
+                    decision = perms.check(block.name, dict(block.input or {}))
+                    if decision["behavior"] == "deny":
+                        output = f"⛔ [Denied] {decision.get('reason', '')}"
+                        log_tool_call(block.name, output[:100])
+                        results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": output,
+                            }
+                        )
+                        continue
+                    elif decision["behavior"] == "ask":
+                        output = f"⏳ [Ask required] {decision.get('reason', '')}\n(Agent loop non-interactive. Add allow rule or switch mode.)"
+                        log_tool_call(block.name, output[:100])
+                        results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": output,
+                            }
+                        )
+                        continue
+                    # behavior == "allow" → 继续执行
                     handler = TOOL_HANDLERS.get(block.name)
                     try:
                         output = (
@@ -117,6 +143,7 @@ def agent_loop(messages: list, state: CompactState) -> None:
             messages[:] = compact_history(
                 client, MODEL, messages, state, focus=compact_focus
             )
+            continue  # 消息列表已被整体替换，跳到下一轮循环
         if used_todo:
             TODO.state.rounds_since_update = 0
         else:
