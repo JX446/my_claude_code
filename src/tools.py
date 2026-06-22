@@ -109,6 +109,7 @@ TOOL_HANDLERS = {
     "load_skill": lambda **kw: SKILL_REGISTRY.load_full_text(kw["name"]),
 }
 
+
 CHILD_TOOLS = [
     {
         "name": "bash",
@@ -203,6 +204,7 @@ CHILD_TOOLS = [
         },
     },
 ]
+
 
 PARENT_TOOLS = CHILD_TOOLS + [
     {

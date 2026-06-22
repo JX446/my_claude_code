@@ -11,6 +11,7 @@ from compact import (
     estimate_context_size,
     micro_compact,
 )
+from hook import trigger_hooks
 from logger import log_task_end, log_task_start, log_tool_call
 from permission import PermissionManager
 from skill import SKILL_REGISTRY
@@ -66,84 +67,63 @@ def agent_loop(messages: list, state: CompactState, perms: PermissionManager) ->
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":
             return
+
         results = []
-        manual_compact = False
-        compact_focus = None
+        compacted = False
         used_todo = False
         for block in response.content:
-            if block.type == "tool_use":
-                # 调用compact
-                if block.name == "compact":
-                    manual_compact = True
-                    compact_focus = str((block.input or {}).get("focus"))
-                # 调用subagent
-                elif block.name == "task":
-                    desc = block.input.get("description", "task")
-                    prompt = str(block.input.get("prompt", ""))
-                    log_task_start(desc)
-                    output = subagent_loop(client, MODEL, prompt, perms)
-                    summary = output.split("\n")[0][:100]
-                    log_task_end(summary)
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": output,
-                        }
-                    )
-                # 调用其他工具
-                else:
-                    # 权限检查：调用 PermissionManager.check() 的多层决策链
-                    decision = perms.check(block.name, dict(block.input or {}))
-                    if decision["behavior"] == "deny":
-                        output = f"⛔ [Denied] {decision.get('reason', '')}"
-                        log_tool_call(block.name, output[:100])
-                        results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": output,
-                            }
-                        )
-                        continue
-                    elif decision["behavior"] == "ask":
-                        output = f"⏳ [Ask required] {decision.get('reason', '')}\n(Agent loop non-interactive. Add allow rule or switch mode.)"
-                        log_tool_call(block.name, output[:100])
-                        results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": output,
-                            }
-                        )
-                        continue
-                    # behavior == "allow" → 继续执行
-                    handler = TOOL_HANDLERS.get(block.name)
-                    try:
-                        output = (
-                            handler(**block.input)
-                            if handler
-                            else f"Unknown tool: {block.name}"
-                        )
-                    except Exception as exc:
-                        output = f"Error: {exc}"
-                    brief = str(output).split("\n")[0][:120]
-                    log_tool_call(block.name, brief)
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": str(output),
-                        }
-                    )
-                    if block.name == "todo":
-                        used_todo = True
-        if manual_compact:
-            log_tool_call("manual_compact", "compacting")
-            messages[:] = compact_history(
-                client, MODEL, messages, state, focus=compact_focus
+            if block.type != "tool_use":
+                continue
+
+            # PreToolUse hook：权限检查、compact
+            result = trigger_hooks("PreToolUse", block, messages)
+            if result == "__COMPACTED__":
+                compacted = True
+                break  # messages 已被 compact_history 替换，退出 for 重启 while
+            if result is not None:
+                results.append(result)
+                continue
+
+            # task 需要 client/model/perms，无法放入通用 TOOL_HANDLERS
+            if block.name == "task":
+                desc = block.input.get("description", "task")
+                prompt = str(block.input.get("prompt", ""))
+                log_task_start(desc)
+                output = subagent_loop(client, MODEL, prompt, perms)
+                summary = output.split("\n")[0][:100]
+                log_task_end(summary)
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": output,
+                    }
+                )
+                continue
+
+            # 其余工具 → TOOL_HANDLERS 分发
+            handler = TOOL_HANDLERS.get(block.name)
+            try:
+                output = (
+                    handler(**block.input) if handler else f"Unknown tool: {block.name}"
+                )
+            except Exception as exc:
+                output = f"Error: {exc}"
+            brief = str(output).split("\n")[0][:120]
+            log_tool_call(block.name, brief)
+            results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": str(output),
+                }
             )
-            continue  # 消息列表已被整体替换，跳到下一轮循环
+            if block.name == "todo":
+                used_todo = True
+
+        if compacted:
+            continue  # 消息列表已被 compact_history 原地替换，重启循环
+
         if used_todo:
             TODO.state.rounds_since_update = 0
         else:
